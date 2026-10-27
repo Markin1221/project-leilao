@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block conteudo %}
+<div class="cards">
+  <div class="card"><small>Dinheiro parado em estoque</small><b>{{ t.parado|brl }}</b></div>
+  <div class="card"><small>Lucro realizado</small><b class="{{ 'pos' if t.lucro >= 0 else 'neg' }}">{{ t.lucro|brl }}</b></div>
+  <div class="card"><small>Motos vendidas</small><b>{{ t.vendidas }}</b></div>
+  <div class="card"><small>Margem média</small><b>{{ '%.0f'|format(t.margem*100) }}%</b></div>
+</div>
+
+<h2>Em estoque</h2>
+{% if estoque %}
+<div class="lista">
+{% for m in estoque %}
+  <a class="item" href="{{ url_for('moto', mid=m.id) }}">
+    <div><b>{{ m.descricao }}</b> {{ m.ano or '' }}<br><small>{{ m.categoria_nome }} · {{ m.dias }} dias parada</small></div>
+    <div class="dir"><b>{{ m.custo|brl }}</b><br><small>alvo {{ m.revenda_alvo|brl }}</small></div>
+  </a>
+{% endfor %}
+</div>
+{% else %}
+<p class="vazio">Nenhuma moto em estoque. Use a <a href="{{ url_for('calculadora') }}">calculadora</a> e clique em "Comprei essa".</p>
+{% endif %}
+
+{% if vendidas %}
+<h2>Vendidas</h2>
+<div class="lista">
+{% for m in vendidas %}
+  <a class="item" href="{{ url_for('moto', mid=m.id) }}">
+    <div><b>{{ m.descricao }}</b> {{ m.ano or '' }}<br><small>{{ m.dias }} dias · vendida {{ m.data_venda }}</small></div>
+    <div class="dir"><b class="{{ 'pos' if m.lucro >= 0 else 'neg' }}">{{ m.lucro|brl }}</b><br><small>{{ '%.0f'|format(m.lucro / m.custo * 100 if m.custo else 0) }}%</small></div>
+  </a>
+{% endfor %}
+</div>
+{% endif %}
+{% endblock %}

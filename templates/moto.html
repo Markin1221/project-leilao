@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block titulo %}{{ m.descricao }}{% endblock %}
+{% block conteudo %}
+<h1>{{ m.descricao }} {{ m.ano or '' }}</h1>
+<p class="sub">{{ m.categoria_nome }}{% if m.lote %} · lote {{ m.lote }}{% endif %}{% if m.placa %} · {{ m.placa }}{% endif %} · comprada {{ m.data_compra }} · {{ m.dias }} dias</p>
+
+<div class="cards">
+  <div class="card"><small>Arremate</small><b>{{ m.valor_arremate|brl }}</b></div>
+  <div class="card"><small>Gastos</small><b>{{ m.gastos|brl }}</b></div>
+  <div class="card"><small>Custo total</small><b>{{ m.custo|brl }}</b></div>
+  {% if m.lucro is not none %}
+  <div class="card"><small>Lucro</small><b class="{{ 'pos' if m.lucro >= 0 else 'neg' }}">{{ m.lucro|brl }}</b></div>
+  {% else %}
+  <div class="card"><small>Lucro se vender no alvo</small><b class="{{ 'pos' if m.revenda_alvo - m.custo >= 0 else 'neg' }}">{{ (m.revenda_alvo - m.custo)|brl }}</b></div>
+  {% endif %}
+</div>
+
+<h2>Gastos</h2>
+<table>
+  <tr><th>Data</th><th>Tipo</th><th>Descrição</th><th class="dir">Valor</th><th></th></tr>
+  {% for g in gastos %}
+  <tr><td>{{ g.data }}</td><td>{{ g.tipo }}</td><td>{{ g.descricao }}</td><td class="dir">{{ g.valor|brl }}</td>
+    <td><form method="post" action="{{ url_for('gasto_remover', gid=g.id) }}" onsubmit="return confirm('Remover gasto?')"><button class="x">✕</button></form></td></tr>
+  {% else %}
+  <tr><td colspan="5" class="vazio">Nenhum gasto ainda.</td></tr>
+  {% endfor %}
+</table>
+<form method="post" action="{{ url_for('gasto_novo', mid=m.id) }}" class="linha">
+  <input type="date" name="data" value="{{ hoje }}">
+  <select name="tipo">
+    {% for t in ['Reparo','Peças','Documentação','Vistoria','Débitos','Frete','Leilao','Anúncio','Outro'] %}<option>{{ t }}</option>{% endfor %}
+  </select>
+  <input name="descricao" placeholder="Descrição">
+  <input name="valor" placeholder="Valor" inputmode="decimal" required>
+  <button>Adicionar</button>
+</form>
+
+<h2>Venda</h2>
+<form method="post" action="{{ url_for('moto_venda', mid=m.id) }}" class="linha">
+  <input type="date" name="data_venda" value="{{ m.data_venda or hoje }}">
+  <input name="valor_venda" placeholder="Valor de venda" inputmode="decimal" value="{{ '%.2f'|format(m.valor_venda) if m.valor_venda is not none else '' }}">
+  <button>{{ 'Atualizar' if m.valor_venda is not none else 'Registrar venda' }}</button>
+</form>
+<p class="sub">Deixe o valor vazio e salve para desfazer a venda.</p>
+
+<form method="post" action="{{ url_for('moto_remover', mid=m.id) }}" onsubmit="return confirm('Apagar esta moto e todos os gastos?')">
+  <button class="perigo">Apagar moto</button>
+</form>
+{% endblock %}

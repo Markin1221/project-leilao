@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#16181d">
+<title>{% block titulo %}Leilão de Motos{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<nav>
+  <a href="{{ url_for('painel') }}" class="logo">🏍️ Leilão</a>
+  <a href="{{ url_for('painel') }}">Painel</a>
+  <a href="{{ url_for('calculadora') }}">Calculadora</a>
+</nav>
+<main>{% block conteudo %}{% endblock %}</main>
+</body>
+</html>

@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block titulo %}Calculadora{% endblock %}
+{% block conteudo %}
+<h1>Vale a pena?</h1>
+
+<details class="fipe" open>
+  <summary>Buscar na FIPE</summary>
+  <div class="linha">
+    <select id="f-marca"><option value="">Marca…</option></select>
+    <select id="f-modelo" disabled><option value="">Modelo…</option></select>
+    <select id="f-ano" disabled><option value="">Ano…</option></select>
+  </div>
+  <p class="sub" id="f-status"></p>
+</details>
+
+<form method="post" class="grade">
+  <label class="largo">Moto<input name="descricao" id="descricao" value="{{ d.descricao }}" placeholder="Ex.: Honda CG 160 Fan"></label>
+  <label>Ano<input name="ano" id="ano" value="{{ d.ano }}"></label>
+  <label>Lote<input name="lote" value="{{ d.lote }}"></label>
+  <label>Categoria
+    <select name="categoria">
+      {% for k, v in categorias.items() %}<option value="{{ k }}" {{ 'selected' if d.categoria == k }}>{{ v[0] }}</option>{% endfor %}
+    </select>
+  </label>
+  <label>FIPE<input name="fipe" id="fipe" inputmode="decimal" value="{{ raw.fipe or '' }}"></label>
+  <label>Revenda estimada <small>(vazio = FIPE × fator)</small><input name="revenda" inputmode="decimal" value="{{ raw.revenda or '' }}"></label>
+  <label>Fator s/ FIPE <small>(vazio = padrão)</small><input name="fator" inputmode="decimal" value="{{ raw.fator or '' }}" placeholder="0,90"></label>
+  <label>Lance<input name="lance" inputmode="decimal" value="{{ raw.lance or '' }}"></label>
+  <label>Comissão %<input name="comissao_pct" inputmode="decimal" value="{{ raw.comissao_pct or '5' }}"></label>
+  <label>Taxas leilão (adm/pátio)<input name="taxas" inputmode="decimal" value="{{ raw.taxas or '' }}"></label>
+  <label>Débitos (IPVA, multas)<input name="debitos" inputmode="decimal" value="{{ raw.debitos or '' }}"></label>
+  <label>Reparo estimado<input name="reparo" inputmode="decimal" value="{{ raw.reparo or '' }}"></label>
+  <label>Documentação + vistoria<input name="documentacao" inputmode="decimal" value="{{ raw.documentacao or '' }}"></label>
+  <label>Frete<input name="frete" inputmode="decimal" value="{{ raw.frete or '' }}"></label>
+  <label>Margem desejada %<input name="margem_alvo" inputmode="decimal" value="{{ raw.margem_alvo or '20' }}"></label>
+  <button class="largo">Calcular</button>
+</form>
+
+{% if r %}
+<div class="resultado {{ r.veredito[0] }}">
+  <h2>{{ r.veredito[1] }}</h2>
+  <div class="cards">
+    <div class="card"><small>Lance máximo ({{ '%.0f'|format(d.margem_alvo) }}%)</small><b>{{ r.lance_max|brl }}</b></div>
+    <div class="card"><small>Revenda estimada</small><b>{{ r.revenda|brl }}</b><small>{{ '%.0f'|format(r.fator*100) }}% da FIPE</small></div>
+    {% if d.lance %}
+    <div class="card"><small>Custo total</small><b>{{ r.custo|brl }}</b><small>comissão {{ r.comissao|brl }} + outros {{ r.fixos|brl }}</small></div>
+    <div class="card"><small>Lucro</small><b class="{{ 'pos' if r.lucro >= 0 else 'neg' }}">{{ r.lucro|brl }}</b><small>{{ '%.0f'|format(r.margem*100) }}% sobre o custo</small></div>
+    {% endif %}
+  </div>
+  {% if d.lance %}
+  <form method="post" action="{{ url_for('moto_nova') }}" class="linha">
+    {% for k in ['descricao','ano','lote','categoria','fipe','lance','comissao_pct','taxas','debitos'] %}
+    <input type="hidden" name="{{ k }}" value="{{ raw[k] or '' }}">{% endfor %}
+    <input type="hidden" name="revenda" value="{{ '%.2f'|format(r.revenda) }}">
+    <input type="date" name="data_compra">
+    <input name="placa" placeholder="Placa (opcional)">
+    <button>Comprei essa ✓</button>
+  </form>
+  <p class="sub">Salva a moto com comissão, taxas e débitos já lançados como gastos.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+<script>
+const $ = id => document.getElementById(id);
+const opt = (sel, lista, val, txt) => {
+  sel.innerHTML = '<option value="">' + sel.options[0].text + '</option>' +
+    lista.map(x => `<option value="${x[val]}">${x[txt]}</option>`).join('');
+  sel.disabled = false;
+};
+async function get(url) {
+  $('f-status').textContent = 'Carregando…';
+  const r = await fetch(url); const j = await r.json();
+  $('f-status').textContent = j.erro ? 'FIPE indisponível agora: ' + j.erro : '';
+  return j;
+}
+get('/api/fipe/marcas').then(j => !j.erro && opt($('f-marca'), j, 'codigo', 'nome'));
+$('f-marca').onchange = async e => {
+  $('f-ano').disabled = true;
+  const j = await get(`/api/fipe/${e.target.value}/modelos`);
+  if (!j.erro) opt($('f-modelo'), j, 'codigo', 'nome');
+};
+$('f-modelo').onchange = async e => {
+  const j = await get(`/api/fipe/${$('f-marca').value}/${e.target.value}/anos`);
+  if (!j.erro) opt($('f-ano'), j, 'codigo', 'nome');
+};
+$('f-ano').onchange = async e => {
+  const j = await get(`/api/fipe/${$('f-marca').value}/${$('f-modelo').value}/${e.target.value}`);
+  if (j.erro) return;
+  $('fipe').value = j.Valor.replace('R$', '').trim();
+  $('descricao').value = j.Marca + ' ' + j.Modelo;
+  $('ano').value = j.AnoModelo;
+  $('f-status').textContent = `FIPE ${j.MesReferencia.trim()}: ${j.Valor}`;
+};
+</script>
+{% endblock %}
