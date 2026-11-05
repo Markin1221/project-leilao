@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block titulo %}Histórico{% endblock %}
+{% block conteudo %}
+<h1>Quanto as motos saíram</h1>
+<p class="sub">Gravado pelo robô nas quintas (<code>ao_vivo.bat</code>).</p>
+
+{% if resumo %}
+<h2>Média por moto</h2>
+<table>
+  <tr><th>Moto</th><th class="dir">Leilões</th><th class="dir">Média arremate</th><th class="dir">% da ref.</th></tr>
+  {% for r in resumo %}
+  <tr><td>{{ r.moto }}</td><td class="dir">{{ r.n }}</td><td class="dir">{{ r.media|brl }}</td><td class="dir">{{ '%.0f'|format((r.pct or 0)*100) }}%</td></tr>
+  {% endfor %}
+</table>
+{% endif %}
+
+<h2>Lotes</h2>
+<table>
+  <tr><th>Data</th><th>Moto</th><th class="dir">Ref.</th><th class="dir">Final</th><th>Status</th></tr>
+  {% for l in lotes %}
+  <tr><td>{{ l.data_leilao }}</td><td>{{ l.descricao }} <small>{{ l.ln }}</small></td>
+    <td class="dir">{{ l.valor_ref|brl }}</td><td class="dir">{{ l.valor_final|brl }}</td><td><small>{{ l.status_final }}</small></td></tr>
+  {% else %}
+  <tr><td colspan="5" class="vazio">Ainda sem resultados. O primeiro sai na próxima quinta.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

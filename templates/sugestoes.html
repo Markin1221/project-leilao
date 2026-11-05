@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block titulo %}Sugestões{% endblock %}
+{% block conteudo %}
+<h1>Motos nos próximos leilões</h1>
+<p class="sub">Pátio {{ cfg.patio }} · atualizado {{ ult or 'nunca' }} · rode <code>atualizar_lotes.bat</code> pra buscar de novo</p>
+
+<form action="{{ url_for('lote_link') }}" class="linha">
+  <input name="l" placeholder="Cole o link ou o número de um lote da Copart">
+  <button>Analisar lote</button>
+</form>
+{% if erro %}<p class="neg">{{ erro }}</p>{% endif %}
+
+{% if not itens and not erro %}
+<p class="vazio">Nenhum lote salvo ainda. Rode <code>atualizar_lotes.bat</code>.</p>
+{% endif %}
+
+{% set ns = namespace(data='') %}
+<div class="lista">
+{% for it in itens %}{% set l = it.l %}{% set r = it.r %}
+  {% if l.data_leilao != ns.data %}{% set ns.data = l.data_leilao %}<h2>Leilão {{ l.data_leilao }}</h2>{% endif %}
+  <div class="lote {{ 'bom' if it.folga > 0 and it.d.categoria != 'sucata' else 'ruim' }}">
+    {% if l.foto %}<img src="{{ l.foto }}" alt="" loading="lazy">{% endif %}
+    <div class="info">
+      <b>{{ l.descricao }}</b> <small>lote {{ l.ln }}</small><br>
+      <small>{{ l.versao or '' }}{% if l.km %} · {{ '%.0f'|format(l.km) }} km{% endif %}</small><br>
+      <small>{{ categorias[it.d.categoria] }} · {{ l.condicao }}</small>
+      {% if it.fora %}<br><small class="neg">⚠️ Fica em {{ l.local_fisico }} — conte o frete</small>{% endif %}
+      {% if l.obs %}<br><small class="obs">📝 {{ l.obs }}</small>{% endif %}
+    </div>
+    <div class="nums">
+      <small>Ref. Copart</small><b>{{ l.valor_ref|brl }}</b>
+      {% if it.tip.mkt and it.tip.mkt.n %}<small><a href="{{ it.tip.mkt.consulta }}" target="_blank" rel="noopener">OLX-PE ({{ it.tip.mkt.n }} anúncios)</a></small><b>{{ it.tip.mkt.mediana|brl }}</b><small>{{ it.tip.mkt.minimo|brl }} – {{ it.tip.mkt.maximo|brl }}</small>
+      {% else %}<small>OLX-PE: sem anúncios, usando ref.</small>{% endif %}
+      <small>Revenda estimada</small><b>{{ r.revenda|brl }}</b>
+      <small>Lance atual (pré-lance)</small><b>{{ l.lance_atual|brl }}</b>
+      {% if it.tip.previsto %}<small>Costuma sair ({{ it.tip.n }}× {{ it.tip.base }})</small><b>~{{ it.tip.previsto|brl }}</b>{% endif %}
+      <small>Seu lance máx.</small><b class="{{ 'pos' if it.folga > 0 else 'neg' }}">{{ r.lance_max|brl }}</b>
+      {% if it.tip.previsto %}<small>Lucro nesse preço</small><b class="{{ 'pos' if r.esperado.lucro >= 0 else 'neg' }}">{{ r.esperado.lucro|brl }}</b><small>pessimista {{ r.pessimista.lucro|brl }}</small>{% endif %}
+    </div>
+    <div class="acoes">
+      <a href="{{ url_for('calculadora', revenda=('%.2f'|format(r.revenda)).replace('.',','), manutencao='', fipe=('%.2f'|format(l.valor_ref or 0)).replace('.',','), lance=('%.2f'|format(l.lance_atual or 0)).replace('.',','), descricao=l.descricao, ano=l.ano, lote=l.ln, categoria=it.d.categoria, taxas=cfg.taxas_padrao, documentacao=cfg.documentacao_padrao, frete=it.d.frete) }}">Analisar</a>
+      <a href="https://www.copart.com.br/lot/{{ l.ln }}" target="_blank" rel="noopener">Ver na Copart ↗</a>
+    </div>
+  </div>
+{% endfor %}
+</div>
+<p class="sub">O lance atual é só o pré-lance: no ao vivo a moto sai mais cara. "Costuma sair" vem do Histórico e aparece depois da primeira quinta gravada. O lance máximo já desconta manutenção, reserva de imprevistos e revenda abaixo da referência.</p>
+<p class="sub">Revenda estimada = mediana dos anúncios da OLX em PE (mesmo modelo e ano) × fator da categoria (anúncio é preço pedido; a venda sai abaixo). Sem anúncios, usa a referência da Copart.</p>
+<p class="sub">"Ref. Copart" é o valor de referência que a Copart mostra no lote (parece seguir a FIPE). O lance máximo usa os custos padrão do <code>config.json</code>.</p>
+{% endblock %}

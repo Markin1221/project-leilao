@@ -33,3 +33,13 @@ table{width:100%;border-collapse:collapse;background:var(--card);border-radius:1
 th,td{padding:8px 10px;border-bottom:1px solid var(--borda);text-align:left}th{color:var(--sub);font-weight:500;font-size:.85em}
 td form{margin:0}
 @media(max-width:600px){th:nth-child(2),td:nth-child(2){display:none}}
+nav{flex-wrap:wrap}
+code{background:#11131a;padding:1px 5px;border-radius:4px;font-size:.9em}
+.lote{display:grid;grid-template-columns:110px 1fr auto;gap:12px;background:var(--card);border:1px solid var(--borda);border-left:4px solid var(--borda);border-radius:10px;padding:10px}
+.lote.bom{border-left-color:var(--pos)}.lote.ruim{border-left-color:var(--neg)}
+.lote img{width:110px;height:82px;object-fit:cover;border-radius:6px}
+.lote .nums{display:flex;flex-direction:column;text-align:right;min-width:120px}
+.lote .acoes{grid-column:1/-1;display:flex;gap:16px}
+.obs{color:var(--ac)}
+@media(max-width:600px){.lote{grid-template-columns:80px 1fr}.lote img{width:80px;height:60px}.lote .nums{grid-column:1/-1;text-align:left}}
+.cenarios{margin-top:12px}.cenarios th{color:var(--txt)}

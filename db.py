@@ -27,20 +27,26 @@ CREATE TABLE IF NOT EXISTS gastos (
     descricao TEXT,
     valor REAL NOT NULL
 );
--- Etapa 3: resultados do leilao de quinta (Copart Vitoria de Santo Antao)
+-- Lotes de moto da Copart (proximos leiloes + resultado)
 CREATE TABLE IF NOT EXISTS lotes_leilao (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ln INTEGER PRIMARY KEY,
+    auction_id INTEGER,
     data_leilao TEXT,
-    patio TEXT,
-    lote TEXT,
-    descricao TEXT,
-    ano TEXT,
-    categoria TEXT,
-    fipe REAL,
-    valor_final REAL,
-    vendido INTEGER,
-    capturado_em TEXT,
-    UNIQUE(data_leilao, lote)
+    descricao TEXT, marca TEXT, modelo TEXT, versao TEXT,
+    ano TEXT, ano_fab TEXT, km REAL,
+    categoria TEXT, dano TEXT, condicao TEXT, local_fisico TEXT,
+    valor_ref REAL, lance_atual REAL,
+    vendedor TEXT, obs TEXT, foto TEXT,
+    atualizado_em TEXT,
+    valor_final REAL, status_final TEXT, bruto_final TEXT,
+    alertado INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS lances_hist (
+    ln INTEGER, ts TEXT, lance REAL
+);
+CREATE TABLE IF NOT EXISTS precos_mercado (
+    chave TEXT PRIMARY KEY, consulta TEXT, mediana REAL, n INTEGER,
+    minimo REAL, maximo REAL, atualizado_em TEXT
 );
 CREATE TABLE IF NOT EXISTS fipe_cache (
     url TEXT PRIMARY KEY,
@@ -59,4 +65,7 @@ def conectar():
 
 def iniciar():
     with conectar() as con:
+        cols = [r[1] for r in con.execute("PRAGMA table_info(lotes_leilao)")]
+        if cols and "ln" not in cols:  # tabela antiga (vazia) da primeira versao
+            con.execute("DROP TABLE lotes_leilao")
         con.executescript(SCHEMA)

@@ -1,10 +1,6 @@
 @echo off
 cd /d "%~dp0"
-if not exist .venv (
-  echo Primeira vez: criando ambiente...
-  python -m venv .venv
-  .venv\Scripts\pip install -r requirements.txt
-)
+call preparar.bat || exit /b 1
 echo.
 echo Abra no PC:      http://localhost:5000
 echo No celular use o IP deste PC na mesma Wi-Fi, ex.: http://192.168.0.10:5000

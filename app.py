@@ -3,14 +3,16 @@ from datetime import date
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
 import fipe
-from calc import CATEGORIAS, analisar, brl, parse_br
+import mercado
+from config import carregar
+from calc import CATEGORIAS, analisar, brl, padroes, parse_br
 from db import conectar, iniciar
 
 app = Flask(__name__)
 app.jinja_env.filters["brl"] = brl
 
-CAMPOS_CALC = ["fipe", "revenda", "fator", "lance", "comissao_pct", "taxas", "debitos",
-               "reparo", "documentacao", "frete", "margem_alvo"]
+CAMPOS_CALC = ["fipe", "revenda", "fator", "lance", "comissao_pct", "taxas", "debitos", "manutencao",
+               "reserva_pct", "documentacao", "frete", "outros", "margem_alvo"]
 
 
 def hoje():
@@ -24,7 +26,7 @@ def resumo_moto(con, m):
     dias = (date.fromisoformat(fim) - date.fromisoformat(m["data_compra"])).days if m["data_compra"] else 0
     lucro = (m["valor_venda"] - custo) if m["valor_venda"] is not None else None
     return {**dict(m), "custo": custo, "gastos": gastos, "dias": dias, "lucro": lucro,
-            "categoria_nome": CATEGORIAS.get(m["categoria"], (m["categoria"] or "-",))[0]}
+            "categoria_nome": CATEGORIAS.get(m["categoria"], m["categoria"] or "-")}
 
 
 @app.route("/")
@@ -47,11 +49,16 @@ def calculadora():
     form = request.form if request.method == "POST" else request.args
     dados = {"categoria": form.get("categoria", "financiamento"), "descricao": form.get("descricao", ""),
              "ano": form.get("ano", ""), "lote": form.get("lote", "")}
-    defaults = {"comissao_pct": 5, "margem_alvo": 20}
+    cfg = carregar()
+    defaults = {"comissao_pct": cfg["comissao_pct"], "margem_alvo": cfg["margem_alvo"],
+                "reserva_pct": cfg["reserva_pct"], "taxas": cfg["taxas_padrao"],
+                "documentacao": cfg["documentacao_padrao"]}
     for c in CAMPOS_CALC:
         dados[c] = parse_br(form.get(c), defaults.get(c, 0))
-    res = analisar(dados) if dados["fipe"] or dados["revenda"] else None
-    return render_template("calculadora.html", d=dados, r=res, categorias=CATEGORIAS, raw=form)
+    res = analisar(dados, cfg) if dados["fipe"] or dados["revenda"] else None
+    return render_template("calculadora.html", d=dados, r=res, categorias=CATEGORIAS, raw=form,
+                           defaults=defaults, pad=padroes(dados["categoria"], cfg),
+                           cfg_p={"venda": cfg["pessimista_venda_pct"], "manut": cfg["pessimista_manutencao_x"]})
 
 
 @app.route("/motos/nova", methods=["POST"])
@@ -124,6 +131,95 @@ def moto_remover(mid):
     with conectar() as con:
         con.execute("DELETE FROM motos WHERE id=?", (mid,))
     return redirect(url_for("painel"))
+
+
+# ---------------- Copart ----------------
+def categoria_lote(l):
+    cat, dano = (l["categoria"] or "").upper(), (l["dano"] or "").upper()
+    if "GRANDE" in dano or "IRRECUP" in dano:
+        return "sucata"
+    if "MÉDIA" in dano or "MEDIA" in dano:
+        return "media"
+    if "PEQUENA" in dano:
+        return "pequena"
+    if "ROUBO" in cat or "FURTO" in cat:
+        return "roubo"
+    if "FINANC" in cat:
+        return "financiamento"
+    return "pequena"  # colisao sem classificacao: conservador
+
+
+def pct_tipico(con, l):
+    """Quanto (% da referencia) essa moto costuma sair no leilao, pelo historico."""
+    q = """SELECT AVG(valor_final / valor_ref), COUNT(*) FROM lotes_leilao
+           WHERE valor_final > 0 AND valor_ref > 0 AND {}"""
+    for filtro, args, nome in (("marca=? AND modelo=?", (l["marca"], l["modelo"]), "mesmo modelo"),
+                               ("categoria=?", (l["categoria"],), "mesma categoria")):
+        pct, n = con.execute(q.format(filtro), args).fetchone()
+        if n:
+            return pct, n, nome
+    return None, 0, None
+
+
+def analisar_lote(con, l, cfg):
+    fora = "VIT" not in (l["local_fisico"] or "").upper()
+    pct, n, base = pct_tipico(con, l)
+    previsto = max((l["valor_ref"] or 0) * pct, l["lance_atual"] or 0) if pct else None
+    cat = categoria_lote(l)
+    mkt = mercado.preco(con, l["marca"], l["modelo"], l["ano"])
+    revenda = mkt["mediana"] * cfg["fator_sobre_anuncio"].get(cat, 0.8) if mkt and mkt["mediana"] else 0
+    d = {"fipe": l["valor_ref"] or 0, "categoria": cat, "revenda": revenda,
+         "lance": previsto or l["lance_atual"] or 0,
+         "taxas": cfg["taxas_padrao"], "documentacao": cfg["documentacao_padrao"],
+         "frete": cfg["frete_outro_patio"] if fora else cfg["frete_local"]}
+    return d, analisar(d, cfg), fora, {"previsto": previsto, "n": n, "base": base, "mkt": mkt}
+
+
+@app.route("/sugestoes")
+def sugestoes():
+    cfg = carregar()
+    with conectar() as con:
+        lotes = con.execute("SELECT * FROM lotes_leilao WHERE data_leilao>=? ORDER BY data_leilao, ln",
+                            (hoje(),)).fetchall()
+        ult = con.execute("SELECT MAX(atualizado_em) FROM lotes_leilao").fetchone()[0]
+        itens = []
+        for l in lotes:
+            d, r, fora, tip = analisar_lote(con, l, cfg)
+            itens.append({"l": l, "d": d, "r": r, "fora": fora, "tip": tip,
+                          "folga": r["lance_max"] - (tip["previsto"] or l["lance_atual"] or 0)})
+    itens.sort(key=lambda x: (x["l"]["data_leilao"], -x["folga"]))
+    return render_template("sugestoes.html", itens=itens, ult=ult, cfg=cfg, categorias=CATEGORIAS)
+
+
+@app.route("/historico")
+def historico():
+    with conectar() as con:
+        lotes = con.execute("""SELECT * FROM lotes_leilao WHERE valor_final IS NOT NULL
+                               ORDER BY data_leilao DESC, ln""").fetchall()
+        resumo = con.execute("""SELECT marca || ' ' || modelo AS moto, COUNT(*) n,
+                                  AVG(valor_final) media, AVG(valor_final / NULLIF(valor_ref,0)) pct
+                                FROM lotes_leilao WHERE valor_final > 0
+                                GROUP BY moto ORDER BY n DESC""").fetchall()
+    return render_template("historico.html", lotes=lotes, resumo=resumo)
+
+
+@app.route("/lote")
+def lote_link():
+    """Analisa um lote colando o link ou o numero."""
+    import copart
+    ln = copart.num_lote(request.args.get("l", ""))
+    if not ln:
+        return redirect(url_for("sugestoes"))
+    with copart.navegador() as page:
+        det = copart.detalhe(page, ln)
+    if not det.get("ln"):
+        return render_template("sugestoes.html", itens=[], ult=None, cfg=carregar(), categorias=CATEGORIAS,
+                               erro=f"Lote {ln} não encontrado na Copart.")
+    l = {"categoria": det.get("lt"), "dano": det.get("dtd"), "local_fisico": det.get("yn")}
+    q = {"fipe": f"{det.get('la') or 0:.2f}".replace(".", ","), "lance": f"{det.get('currBid') or 0:.2f}".replace(".", ","),
+         "descricao": f"{det.get('mkn','')} {det.get('version') or det.get('lm','')}".strip(),
+         "ano": det.get("lcy", ""), "lote": ln, "categoria": categoria_lote(l)}
+    return redirect(url_for("calculadora", **q))
 
 
 # ---- FIPE (o navegador pede, o servidor busca e guarda em cache) ----

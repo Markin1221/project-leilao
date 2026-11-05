@@ -1,3 +1,7 @@
 .venv/
 __pycache__/
 leilao.db
+perfil_copart/
+config.json
+robo.log
+debug_olx.*
