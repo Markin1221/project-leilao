@@ -27,7 +27,7 @@ CREATE TABLE IF NOT EXISTS gastos (
     descricao TEXT,
     valor REAL NOT NULL
 );
--- Lotes de moto da Copart (proximos leiloes + resultado)
+-- Lotes da Copart (todos os veiculos) (proximos leiloes + resultado)
 CREATE TABLE IF NOT EXISTS lotes_leilao (
     ln INTEGER PRIMARY KEY,
     auction_id INTEGER,
@@ -40,6 +40,10 @@ CREATE TABLE IF NOT EXISTS lotes_leilao (
     atualizado_em TEXT,
     valor_final REAL, status_final TEXT, bruto_final TEXT,
     alertado INTEGER DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS fotos (
+    ln INTEGER, seq INTEGER, url_vga TEXT, url_hd TEXT, arquivo TEXT,
+    PRIMARY KEY (ln, seq)
 );
 CREATE TABLE IF NOT EXISTS lances_hist (
     ln INTEGER, ts TEXT, lance REAL
@@ -56,6 +60,16 @@ CREATE TABLE IF NOT EXISTS fipe_cache (
 """
 
 
+# campos completos do lote (adicionados em bancos antigos automaticamente)
+COLUNAS_EXTRAS = [
+    ("tipo_veiculo", "TEXT"), ("lote_no_leilao", "INTEGER"), ("chassi", "TEXT"), ("tipo_chassi", "TEXT"),
+    ("tipo_documento", "TEXT"), ("blindado", "INTEGER"), ("chave", "TEXT"), ("final_placa", "TEXT"),
+    ("combustivel", "TEXT"), ("cor", "TEXT"), ("motor", "TEXT"), ("comitente", "TEXT"), ("patio", "TEXT"),
+    ("condicoes_url", "TEXT"), ("vendido", "INTEGER"), ("n_fotos", "INTEGER"),
+    ("bruto_lista", "TEXT"), ("bruto_detalhe", "TEXT"),
+]
+
+
 def conectar():
     con = sqlite3.connect(DB_PATH)
     con.row_factory = sqlite3.Row
@@ -69,3 +83,7 @@ def iniciar():
         if cols and "ln" not in cols:  # tabela antiga (vazia) da primeira versao
             con.execute("DROP TABLE lotes_leilao")
         con.executescript(SCHEMA)
+        existentes = {r[1] for r in con.execute("PRAGMA table_info(lotes_leilao)")}
+        for col, tipo in COLUNAS_EXTRAS:
+            if col not in existentes:
+                con.execute(f"ALTER TABLE lotes_leilao ADD COLUMN {col} {tipo}")

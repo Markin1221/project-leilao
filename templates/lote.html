@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icone %}
+{% block titulo %}{{ l.descricao|nome }}{% endblock %}
+{% block conteudo %}
+{% set r = an.r %}
+<a class="voltar" href="javascript:history.back()">Voltar</a>
+<div class="ficha-grade">
+  <section>
+    {% if fotos %}
+    <div class="galeria">
+      {% for f in fotos %}
+      {% set src = url_for('foto', arq=f.arquivo) if f.arquivo else f.url_vga %}
+      <a href="{{ f.url_hd or src }}" target="_blank" rel="noopener"><img src="{{ src }}" alt="Foto {{ f.seq }}" loading="lazy"></a>
+      {% endfor %}
+    </div>
+    {% elif l.foto %}
+    <div class="galeria uma"><img src="{{ l.foto }}" alt=""></div>
+    <p class="nota">{{ icone('foto') }}As outras fotos chegam na próxima atualização dos lotes.</p>
+    {% endif %}
+
+    <h2>Ficha</h2>
+    <dl class="ficha">
+      {% for nome, v in campos %}<div><dt>{{ nome }}</dt><dd>{{ v }}</dd></div>{% endfor %}
+      {% if l.condicoes_url %}<div><dt>Condições específicas</dt><dd><a href="{{ l.condicoes_url }}" target="_blank" rel="noopener">Abrir edital {{ icone('fora') }}</a></dd></div>{% endif %}
+    </dl>
+
+    <details class="bruto">
+      <summary>Dados brutos da Copart ({{ extras|length }} campos)</summary>
+      <dl class="ficha">{% for k, v in extras %}<div><dt><code>{{ k }}</code></dt><dd><small>{{ v }}</small></dd></div>{% endfor %}</dl>
+    </details>
+  </section>
+
+  <aside class="lado">
+    {% if l.lote_no_leilao %}<span class="chip-lote grande">Lote {{ l.lote_no_leilao }}</span>{% endif %}
+    <h1>{{ l.descricao|nome }}</h1>
+    <p class="sub">{{ l.versao or '' }}</p>
+    <div class="pills">
+      <span class="pill">{{ categorias[an.d.categoria] }}</span>
+      {% if l.km %}<span class="pill">{{ icone('km') }}{{ '{:,.0f}'.format(l.km).replace(',', '.') }} km</span>{% endif %}
+      {% if l.n_fotos %}<span class="pill">{{ icone('foto') }}{{ l.n_fotos }}</span>{% endif %}
+      {% if an.fora %}<span class="pill aviso">{{ icone('local') }}{{ (l.local_fisico or '')|nome }}</span>{% endif %}
+    </div>
+
+    <div class="painel-resultado {{ 'pos' if l.vendido else 'apagado' if l.vendido == 0 else '' }}">
+      {% if l.valor_final is not none %}
+        <span>{{ 'Saiu por' if l.vendido else 'Não vendido, último lance' if l.vendido == 0 else 'Valor final' }}</span>
+        <b>{{ l.valor_final|brl }}</b>
+        {% if l.valor_ref %}<small>{{ '%.0f'|format(l.valor_final / l.valor_ref * 100) }}% da FIPE de {{ l.valor_ref|brl100 }}</small>{% endif %}
+      {% else %}
+        <span>Dê até</span>
+        <b class="{{ 'pos' if an.r.lance_max > (an.tip.previsto or l.lance_atual or 0) else 'neg' }}">{{ r.lance_max|brl100 }}</b>
+        <small>Leilão {{ l.data_leilao[8:10] }}/{{ l.data_leilao[5:7] }}, lance agora {{ l.lance_atual|brl100 if l.lance_atual else 'nenhum' }}</small>
+      {% endif %}
+    </div>
+
+    <dl class="conta">
+      <div><dt>FIPE</dt><dd>{{ l.valor_ref|brl100 }}</dd></div>
+      <div><dt>Revenda estimada</dt><dd>{{ r.revenda|brl100 }}</dd></div>
+      {% if an.tip.previsto %}<div><dt>Costuma sair ({{ an.tip.n }}×)</dt><dd>{{ an.tip.previsto|brl100 }}</dd></div>{% endif %}
+      <div><dt>Lucro esperado</dt><dd class="{{ 'pos' if r.esperado.lucro >= 0 else 'neg' }}">{{ r.esperado.lucro|brl100 }}</dd></div>
+      <div><dt>No pior caso</dt><dd class="{{ 'pos' if r.pessimista.lucro >= 0 else 'neg' }}">{{ r.pessimista.lucro|brl100 }}</dd></div>
+    </dl>
+    {% if l.obs %}<p class="obs">{{ icone('doc') }}{{ l.obs }}</p>{% endif %}
+
+    <a class="botao" href="{{ url_for('lote_link', l=l.ln) }}">{{ icone('calc') }}Ajustar a conta</a>
+    <a class="botao claro" href="https://www.copart.com.br/lot/{{ l.ln }}" target="_blank" rel="noopener">{{ icone('fora') }}Abrir na Copart</a>
+
+    {% if lances %}
+    <h2>Lances no ao vivo</h2>
+    <dl class="conta">{% for t in lances %}<div><dt>{{ t.ts[11:16] }}</dt><dd>{{ t.lance|brl }}</dd></div>{% endfor %}</dl>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

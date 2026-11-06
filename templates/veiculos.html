@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% from "_macros.html" import icone %}
+{% block titulo %}Veículos{% endblock %}
+{% block conteudo %}
+<div class="cabeca">
+  <h1>Veículos</h1>
+  <p class="sub">{{ total }} no banco{% if n_final %}, {{ n_final }} já leiloados, média {{ media_final|brl100 }}{% endif %}</p>
+</div>
+
+<form class="filtros">
+  {% if a.q %}<input type="hidden" name="q" value="{{ a.q }}">{% endif %}
+  <select name="tipo" aria-label="Tipo"><option value="">Todos os tipos</option>{% for o in opcoes.tipo %}<option {{ 'selected' if a.tipo == o }}>{{ o }}</option>{% endfor %}</select>
+  <select name="data" aria-label="Data do leilão"><option value="">Todas as datas</option>{% for o in opcoes.data %}<option value="{{ o }}" {{ 'selected' if a.data == o }}>{{ o[8:10] }}/{{ o[5:7] }}/{{ o[:4] }}</option>{% endfor %}</select>
+  <select name="cat" aria-label="Condição"><option value="">Toda condição</option>{% for o in opcoes.cat %}<option value="{{ o }}" {{ 'selected' if a.cat == o }}>{{ o|capitalize }}</option>{% endfor %}</select>
+  <select name="sit" aria-label="Situação">
+    {% for v, t in [('', 'Qualquer situação'), ('aberto', 'Ainda vai a leilão'), ('vendido', 'Vendido'), ('nao', 'Não vendido')] %}
+    <option value="{{ v }}" {{ 'selected' if (a.sit or '') == v }}>{{ t }}</option>{% endfor %}
+  </select>
+  <select name="ord" aria-label="Ordenar">
+    {% for v, t in [('data', 'Mais recentes'), ('final', 'Maior valor final'), ('ref', 'Maior FIPE'), ('pct', 'Maior % da FIPE'), ('nome', 'Nome')] %}
+    <option value="{{ v }}" {{ 'selected' if (a.ord or 'data') == v }}>{{ t }}</option>{% endfor %}
+  </select>
+  <button>Filtrar</button>
+  {% if a %}<a class="limpar" href="{{ url_for('veiculos') }}">Limpar</a>{% endif %}
+</form>
+
+<div class="tiles">
+{% for l in lotes %}
+  {% set m = miniaturas.get(l.ln) %}
+  <a class="tile" href="{{ url_for('ficha_lote', ln=l.ln) }}">
+    <div class="tile-img">
+      <img src="{{ url_for('foto', arq=m) if m else l.foto }}" alt="" loading="lazy">
+      {% if l.lote_no_leilao %}<span class="chip-lote">Lote {{ l.lote_no_leilao }}</span>{% endif %}
+    </div>
+    <b class="tile-nome">{{ l.descricao|nome }}</b>
+    <span class="tile-sub">{{ l.versao or l.tipo_veiculo or '' }}</span>
+    <div class="tile-stats">
+      {% if l.valor_final is not none and l.vendido %}
+        <span class="st pos">{{ icone('ok') }}{{ l.valor_final|brl100 }}</span>
+        {% if l.valor_ref %}<span class="st">{{ '%.0f'|format(l.valor_final / l.valor_ref * 100) }}% FIPE</span>{% endif %}
+      {% elif l.vendido == 0 %}
+        <span class="st apagado">{{ icone('nao') }}Não vendido</span>
+      {% else %}
+        <span class="st">{{ icone('relogio') }}{{ l.data_leilao[8:10] }}/{{ l.data_leilao[5:7] }}</span>
+        <span class="st">FIPE {{ l.valor_ref|brl100 }}</span>
+      {% endif %}
+    </div>
+  </a>
+{% else %}
+  <div class="vazio">{{ icone('busca', 'ic grande') }}<p>Nenhum veículo com esses filtros.</p><a class="botao" href="{{ url_for('veiculos') }}">Ver todos</a></div>
+{% endfor %}
+</div>
+
+{% if paginas > 1 %}
+<nav class="paginas" aria-label="Páginas">
+  {% for p in range(1, paginas + 1) %}
+  {% set q = dict(a) %}{% set _ = q.update({'p': p}) %}
+  <a href="{{ url_for('veiculos', **q) }}"{% if p == pagina %} aria-current="page"{% endif %}>{{ p }}</a>
+  {% endfor %}
+</nav>
+{% endif %}
+{% endblock %}

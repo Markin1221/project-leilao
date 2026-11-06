@@ -5,3 +5,5 @@ perfil_copart/
 config.json
 robo.log
 debug_olx.*
+fotos/
+.*.lock

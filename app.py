@@ -1,4 +1,5 @@
 from datetime import date
+from pathlib import Path
 
 from flask import Flask, jsonify, redirect, render_template, request, url_for
 
@@ -9,7 +10,21 @@ from calc import CATEGORIAS, analisar, brl, padroes, parse_br
 from db import conectar, iniciar
 
 app = Flask(__name__)
+app.config["TEMPLATES_AUTO_RELOAD"] = True
+app.jinja_env.auto_reload = True
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 app.jinja_env.filters["brl"] = brl
+def nome_bonito(t):
+    """'2017 HONDA XRE 300' -> '2017 Honda XRE 300'; siglas e codigos ficam em maiusculas."""
+    def w(x):
+        if any(c.isdigit() for c in x) or len(x) <= 3 or "-" in x:
+            return x.upper() if len(x) <= 3 else x
+        return x.capitalize()
+    return " ".join(w(x) for x in str(t or "").split())
+
+
+app.jinja_env.filters["nome"] = nome_bonito
+app.jinja_env.filters["brl100"] = lambda v: brl(round(v / 100) * 100) if v else brl(v)
 
 CAMPOS_CALC = ["fipe", "revenda", "fator", "lance", "comissao_pct", "taxas", "debitos", "manutencao",
                "reserva_pct", "documentacao", "frete", "outros", "margem_alvo"]
@@ -136,7 +151,8 @@ def moto_remover(mid):
 # ---------------- Copart ----------------
 def categoria_lote(l):
     cat, dano = (l["categoria"] or "").upper(), (l["dano"] or "").upper()
-    if "GRANDE" in dano or "IRRECUP" in dano:
+    doc = (l.get("tipo_documento") if isinstance(l, dict) else (l["tipo_documento"] if "tipo_documento" in l.keys() else "")) or ""
+    if "GRANDE" in dano or "IRRECUP" in dano or "IRRECUP" in doc.upper() or "SUCATA" in doc.upper():
         return "sucata"
     if "MÉDIA" in dano or "MEDIA" in dano:
         return "media"
@@ -169,6 +185,7 @@ def analisar_lote(con, l, cfg):
     mkt = mercado.preco(con, l["marca"], l["modelo"], l["ano"])
     revenda = mkt["mediana"] * cfg["fator_sobre_anuncio"].get(cat, 0.8) if mkt and mkt["mediana"] else 0
     d = {"fipe": l["valor_ref"] or 0, "categoria": cat, "revenda": revenda,
+         "carro": (l["tipo_veiculo"] or "Motos") != "Motos",
          "lance": previsto or l["lance_atual"] or 0,
          "taxas": cfg["taxas_padrao"], "documentacao": cfg["documentacao_padrao"],
          "frete": cfg["frete_outro_patio"] if fora else cfg["frete_local"]}
@@ -178,9 +195,14 @@ def analisar_lote(con, l, cfg):
 @app.route("/sugestoes")
 def sugestoes():
     cfg = carregar()
+    tipo = request.args.get("tipo", "Motos")
     with conectar() as con:
-        lotes = con.execute("SELECT * FROM lotes_leilao WHERE data_leilao>=? ORDER BY data_leilao, ln",
-                            (hoje(),)).fetchall()
+        tipos = [r[0] for r in con.execute("""SELECT tipo_veiculo, COUNT(*) FROM lotes_leilao WHERE data_leilao>=?
+                    AND tipo_veiculo IS NOT NULL GROUP BY tipo_veiculo
+                    ORDER BY tipo_veiculo<>'Motos', COUNT(*) DESC""", (hoje(),))]
+        filtro, args = ("", (hoje(),)) if tipo == "todos" else (" AND tipo_veiculo=?", (hoje(), tipo))
+        lotes = con.execute("SELECT * FROM lotes_leilao WHERE data_leilao>=?" + filtro + " ORDER BY data_leilao, ln",
+                            args).fetchall()
         ult = con.execute("SELECT MAX(atualizado_em) FROM lotes_leilao").fetchone()[0]
         itens = []
         for l in lotes:
@@ -188,7 +210,100 @@ def sugestoes():
             itens.append({"l": l, "d": d, "r": r, "fora": fora, "tip": tip,
                           "folga": r["lance_max"] - (tip["previsto"] or l["lance_atual"] or 0)})
     itens.sort(key=lambda x: (x["l"]["data_leilao"], -x["folga"]))
-    return render_template("sugestoes.html", itens=itens, ult=ult, cfg=cfg, categorias=CATEGORIAS)
+    return render_template("sugestoes.html", itens=itens, ult=ult, cfg=cfg, categorias=CATEGORIAS,
+                           tipos=tipos, tipo=tipo)
+
+
+CAMPOS_FICHA = [("lote_no_leilao", "Lote no leilão"), ("ln", "Código"), ("descricao", "Descrição"),
+                ("versao", "Versão"), ("ano_fab", "Fabricação"), ("ano", "Modelo"), ("marca", "Marca"),
+                ("modelo", "Modelo (nome)"), ("tipo_veiculo", "Categoria"), ("valor_ref", "FIPE / ref."),
+                ("tipo_documento", "Tipo de documento"), ("dano", "Tipo de monta"), ("tipo_chassi", "Tipo de chassi"),
+                ("blindado", "Blindado"), ("categoria", "Condição"), ("condicao", "Condição func."),
+                ("chassi", "Chassi"), ("chave", "Chave"), ("final_placa", "Final da placa"), ("km", "Km"),
+                ("combustivel", "Combustível"), ("motor", "Motor"), ("cor", "Cor"), ("patio", "Pátio"),
+                ("local_fisico", "Local físico"), ("comitente", "Comitente"), ("vendedor", "Vendedor"),
+                ("obs", "Complemento"), ("data_leilao", "Data do leilão"), ("lance_atual", "Lance atual"),
+                ("valor_final", "Valor final"), ("status_final", "Resultado")]
+
+
+@app.route("/veiculos")
+def veiculos():
+    a = request.args
+    where, args = ["1=1"], []
+    if a.get("q"):
+        where.append("(descricao LIKE ? OR versao LIKE ? OR chassi LIKE ? OR CAST(ln AS TEXT)=?)")
+        args += [f"%{a['q']}%"] * 3 + [a["q"]]
+    for campo, col in (("tipo", "tipo_veiculo"), ("data", "data_leilao"), ("cat", "categoria")):
+        if a.get(campo):
+            where.append(f"{col}=?")
+            args.append(a[campo])
+    situacao = a.get("sit", "")
+    if situacao == "vendido":
+        where.append("vendido=1")
+    elif situacao == "nao":
+        where.append("vendido=0")
+    elif situacao == "aberto":
+        where.append("valor_final IS NULL")
+    ordens = {"data": "data_leilao DESC, lote_no_leilao, ln", "final": "valor_final DESC",
+              "ref": "valor_ref DESC", "pct": "valor_final / NULLIF(valor_ref,0) DESC", "nome": "descricao"}
+    ordem = ordens.get(a.get("ord"), ordens["data"])
+    pagina = max(int(a.get("p", 1) or 1), 1)
+    with conectar() as con:
+        filtro = " AND ".join(where)
+        total, soma_final, n_final = con.execute(
+            f"SELECT COUNT(*), SUM(valor_final), COUNT(valor_final) FROM lotes_leilao WHERE {filtro}", args).fetchone()
+        lotes = con.execute(f"SELECT * FROM lotes_leilao WHERE {filtro} ORDER BY {ordem} LIMIT 50 OFFSET ?",
+                            args + [(pagina - 1) * 50]).fetchall()
+        opcoes = {
+            "tipo": [r[0] for r in con.execute("SELECT DISTINCT tipo_veiculo FROM lotes_leilao WHERE tipo_veiculo IS NOT NULL ORDER BY 1")],
+            "data": [r[0] for r in con.execute("SELECT DISTINCT data_leilao FROM lotes_leilao ORDER BY 1 DESC")],
+            "cat": [r[0] for r in con.execute("SELECT DISTINCT categoria FROM lotes_leilao WHERE categoria IS NOT NULL ORDER BY 1")],
+        }
+        miniaturas = {r[0]: r[1] for r in con.execute(
+            "SELECT ln, arquivo FROM fotos WHERE seq=1 AND arquivo IS NOT NULL AND ln IN (%s)"
+            % ",".join(str(l["ln"]) for l in lotes) if lotes else "SELECT 1, 1 WHERE 0")}
+    return render_template("veiculos.html", lotes=lotes, total=total, pagina=pagina, a=a, opcoes=opcoes,
+                           paginas=(total + 49) // 50, miniaturas=miniaturas,
+                           media_final=(soma_final / n_final) if n_final else None, n_final=n_final)
+
+
+@app.route("/lotes/<int:ln>")
+def ficha_lote(ln):
+    import json as _json
+    with conectar() as con:
+        l = con.execute("SELECT * FROM lotes_leilao WHERE ln=?", (ln,)).fetchone()
+        if not l:
+            return redirect(url_for("sugestoes"))
+        fotos = con.execute("SELECT * FROM fotos WHERE ln=? ORDER BY seq", (ln,)).fetchall()
+        lances = con.execute("SELECT ts, lance FROM lances_hist WHERE ln=? ORDER BY ts", (ln,)).fetchall()
+        d, r, fora, tip = analisar_lote(con, l, carregar())
+    campos = []
+    for k, nome in CAMPOS_FICHA:
+        v = l[k]
+        if v in (None, ""):
+            continue
+        if k == "blindado":
+            v = "Sim" if v else "Não"
+        elif k in ("valor_ref", "lance_atual", "valor_final"):
+            v = brl(v)
+        elif k == "km":
+            v = f"{v:,.0f}".replace(",", ".")
+        campos.append((nome, v))
+    extras = {}
+    for col in ("bruto_detalhe", "bruto_lista"):
+        try:
+            extras.update({k: v for k, v in _json.loads(l[col] or "{}").items() if v not in (None, "", 0, [])})
+        except ValueError:
+            pass
+    return render_template("lote.html", l=l, campos=campos, fotos=fotos, lances=lances,
+                           extras=sorted(extras.items()), an={"d": d, "r": r, "fora": fora, "tip": tip},
+                           categorias=CATEGORIAS)
+
+
+@app.route("/fotos/<path:arq>")
+def foto(arq):
+    from flask import send_from_directory
+    return send_from_directory(Path(__file__).parent / "fotos", arq)
 
 
 @app.route("/historico")
@@ -215,7 +330,8 @@ def lote_link():
     if not det.get("ln"):
         return render_template("sugestoes.html", itens=[], ult=None, cfg=carregar(), categorias=CATEGORIAS,
                                erro=f"Lote {ln} não encontrado na Copart.")
-    l = {"categoria": det.get("lt"), "dano": det.get("dtd"), "local_fisico": det.get("yn")}
+    l = {"categoria": det.get("lt"), "dano": det.get("dtd"), "local_fisico": det.get("yn"),
+         "tipo_documento": det.get("stt")}
     q = {"fipe": f"{det.get('la') or 0:.2f}".replace(".", ","), "lance": f"{det.get('currBid') or 0:.2f}".replace(".", ","),
          "descricao": f"{det.get('mkn','')} {det.get('version') or det.get('lm','')}".strip(),
          "ano": det.get("lcy", ""), "lote": ln, "categoria": categoria_lote(l)}

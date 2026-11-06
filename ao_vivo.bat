@@ -1,4 +1,8 @@
 @echo off
+title Leilao AO VIVO - nao feche esta janela
 cd /d "%~dp0"
-call preparar.bat || exit /b 1
-.venv\Scripts\python copart.py ao-vivo >> robo.log 2>&1
+call preparar.bat || (pause & exit /b 1)
+.venv\Scripts\python copart.py ao-vivo
+echo.
+echo Terminou. O registro completo esta em robo.log
+if "%1"=="" pause

@@ -1,20 +1,37 @@
-<!doctype html>
+{% from "_macros.html" import icone %}<!doctype html>
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#16181d">
-<title>{% block titulo %}Leilão de Motos{% endblock %}</title>
-<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<meta name="theme-color" content="#18191C">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Figtree:wght@500;600;700;800;900&display=swap" rel="stylesheet">
+<link rel="icon" href="{{ url_for('static', filename='placa.svg') }}">
+<title>{% block titulo %}Painel{% endblock %} | Arremate</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}?v=4">
 </head>
 <body>
-<nav>
-  <a href="{{ url_for('painel') }}" class="logo">🏍️ Leilão</a>
-  <a href="{{ url_for('painel') }}">Painel</a>
-  <a href="{{ url_for('sugestoes') }}">Sugestões</a>
-  <a href="{{ url_for('calculadora') }}">Calculadora</a>
-  <a href="{{ url_for('historico') }}">Histórico</a>
-</nav>
-<main>{% block conteudo %}{% endblock %}</main>
+{% include "_icones.html" %}
+{% set rota = request.endpoint %}
+<header class="topo">
+  <a href="{{ url_for('painel') }}" class="marca" aria-label="Arremate, ir para o painel">
+    <span class="marca-bloco">{{ icone('martelo') }}</span>
+    <span class="marca-nome">Arremate</span>
+  </a>
+  <form class="topo-busca" action="{{ url_for('veiculos') }}" role="search">
+    {{ icone('busca') }}
+    <input name="q" placeholder="Buscar veículo, chassi ou código" aria-label="Buscar veículo" value="{{ request.args.get('q', '') if rota == 'veiculos' else '' }}">
+  </form>
+  <a class="topo-acao" href="{{ url_for('sugestoes') }}">{{ icone('alvo') }}<span>Próximo leilão</span></a>
+</header>
+<div class="casca">
+  <nav class="lateral" aria-label="Principal">
+    {% for ep, nome, ic in [('painel','Painel','painel'),('sugestoes','Sugestões','alvo'),('veiculos','Veículos','carro'),('historico','Histórico','grafico'),('calculadora','Calculadora','calc')] %}
+    <a href="{{ url_for(ep) }}"{% if rota == ep or (ep == 'veiculos' and rota == 'ficha_lote') %} aria-current="page"{% endif %}>{{ icone(ic) }}<span>{{ nome }}</span></a>
+    {% endfor %}
+  </nav>
+  <main>{% block conteudo %}{% endblock %}</main>
+</div>
 </body>
 </html>

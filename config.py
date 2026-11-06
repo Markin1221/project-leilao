@@ -24,10 +24,13 @@ PADRAO = {
     "pessimista_manutencao_x": 2,    # ...e a manutencao sai o dobro
     "navegador_visivel": False,     # mude para true se a Copart bloquear o robo
     "pesquisar_olx": False,         # a OLX bloqueia robos (Cloudflare); desligado
+    "baixar_fotos": True,           # baixa as fotos (tamanho medio) pra pasta fotos/
+    # carro: manutencao padrao = a da moto x este fator
+    "manutencao_carro_x": 4,
     "telegram_token": "",
     "telegram_chat_id": "",
     "interesses": [
-        {"modelo": "CG 160", "ano_min": 2020, "lance_ate": 12000},
+        {"tipo": "Motos", "modelo": "CG 160", "ano_min": 2020, "lance_ate": 12000},
     ],
 }
 

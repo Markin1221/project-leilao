@@ -3,10 +3,10 @@ from config import carregar
 
 CATEGORIAS = {
     "financiamento": "Recuperada de financiamento",
-    "roubo": "Recuperada de roubo/furto",
+    "roubo": "Recuperada de roubo ou furto",
     "pequena": "Sinistro pequena monta",
-    "media": "Sinistro media monta",
-    "sucata": "Sucata / baixa (nao volta a rodar)",
+    "media": "Sinistro média monta",
+    "sucata": "Sucata ou baixa (não volta a rodar)",
 }
 
 
@@ -28,14 +28,16 @@ def parse_br(valor, padrao=0.0):
 def brl(v):
     if v is None:
         return "-"
-    s = f"{abs(v):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    casas = 0 if abs(v - round(v)) < 0.005 else 2  # sem ",00" quando e valor redondo
+    s = f"{abs(v):,.{casas}f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return ("-R$ " if v < 0 else "R$ ") + s
 
 
-def padroes(categoria, cfg=None):
+def padroes(categoria, cfg=None, carro=False):
     cfg = cfg or carregar()
+    manut = cfg["manutencao_padrao"].get(categoria, 1500)
     return {"fator": cfg["fator_revenda"].get(categoria, 0.8),
-            "manutencao": cfg["manutencao_padrao"].get(categoria, 1500)}
+            "manutencao": manut * (cfg["manutencao_carro_x"] if carro else 1)}
 
 
 def _cenario(lance, revenda, manutencao, fixos, com, reserva):
@@ -52,7 +54,7 @@ def analisar(d, cfg=None):
     """d: dict com numeros. Campos vazios (0) usam os padroes do config.json."""
     cfg = cfg or carregar()
     cat = d.get("categoria", "financiamento")
-    pad = padroes(cat, cfg)
+    pad = padroes(cat, cfg, d.get("carro", False))
     fipe = d.get("fipe", 0)
     fator = d.get("fator") or pad["fator"]
     revenda = d.get("revenda") or fipe * fator

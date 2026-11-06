@@ -35,14 +35,33 @@ JS_BUSCA = """async ({aid, pagina}) => {
   const p = new URLSearchParams({'query':'*','filter[MISC]':'auction_id:' + aid,
     'sort':'auction_date_utc asc,brazil_default_sort asc','page':String(pagina),'size':'100',
     'start':String(pagina*100),'defaultSort':'true','showUpComing':'true'});
-  const r = await fetch('/public/lots/search', {method:'POST',
+  const r = await fetch('/public/lots/search', {method:'POST', signal: AbortSignal.timeout(30000),
     headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:p});
   return await r.json();
 }"""
 
 
+LOG = Path(__file__).parent / "robo.log"
+
+
 def log(*a):
-    print(datetime.now().strftime("%H:%M:%S"), *a, flush=True)
+    linha = " ".join([datetime.now().strftime("%H:%M:%S")] + [str(x) for x in a])
+    print(linha, flush=True)
+    try:
+        with open(LOG, "a", encoding="utf-8") as f:
+            f.write(linha + "\n")
+    except OSError:
+        pass
+
+
+def nao_dormir(ligar=True):
+    """Impede o Windows de suspender enquanto o robo roda."""
+    try:
+        import ctypes
+        ES_CONTINUOUS, ES_SYSTEM_REQUIRED = 0x80000000, 0x00000001
+        ctypes.windll.kernel32.SetThreadExecutionState(ES_CONTINUOUS | (ES_SYSTEM_REQUIRED if ligar else 0))
+    except Exception:
+        pass
 
 
 @contextmanager
@@ -63,7 +82,7 @@ def navegador(visivel=None):
 
 
 def get_json(page, url):
-    return page.evaluate("async (u) => (await fetch(u)).json()", url)
+    return page.evaluate("async (u) => (await fetch(u, {signal: AbortSignal.timeout(30000)})).json()", url)
 
 
 def leiloes_do_patio(page, patio):
@@ -102,22 +121,73 @@ def num_lote(texto):
 
 
 def salvar_lote(con, l, data_leilao, aid, det=None):
+    """Grava o lote. l = item da lista do leilao; det = detalhe completo (opcional)."""
     det = det or {}
-    km = det.get("orr")
+    km = det.get("orr") or l.get("orr")
+    blind = det.get("armored")
     con.execute("""
         INSERT INTO lotes_leilao (ln, auction_id, data_leilao, descricao, marca, modelo, versao, ano, ano_fab, km,
-            categoria, dano, condicao, local_fisico, valor_ref, lance_atual, vendedor, obs, foto, atualizado_em)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            categoria, dano, condicao, local_fisico, valor_ref, lance_atual, vendedor, obs, foto, atualizado_em,
+            tipo_veiculo, lote_no_leilao, chassi, tipo_documento, motor, bruto_lista)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ON CONFLICT(ln) DO UPDATE SET auction_id=excluded.auction_id, data_leilao=excluded.data_leilao,
             lance_atual=excluded.lance_atual, condicao=excluded.condicao, dano=excluded.dano,
             local_fisico=excluded.local_fisico, valor_ref=excluded.valor_ref,
             versao=COALESCE(excluded.versao, versao), km=COALESCE(excluded.km, km),
-            obs=COALESCE(excluded.obs, obs), atualizado_em=excluded.atualizado_em
+            obs=COALESCE(excluded.obs, obs), tipo_veiculo=excluded.tipo_veiculo,
+            lote_no_leilao=excluded.lote_no_leilao, tipo_documento=excluded.tipo_documento,
+            bruto_lista=excluded.bruto_lista, atualizado_em=excluded.atualizado_em
     """, (l["ln"], aid, data_leilao, l.get("ld"), l.get("mkn"), l.get("lm"), det.get("version"),
           l.get("lcy"), l.get("manufactureYear"), km if km else None, l.get("lossType"),
           l.get("damageClassification"), l.get("drivabilityRating"), l.get("yn"),
           float(l.get("la") or 0), float(l.get("hb") or 0), l.get("sellerName"), det.get("cmmnts"),
-          l.get("tims"), datetime.now().isoformat(timespec="seconds")))
+          l.get("tims"), datetime.now().isoformat(timespec="seconds"),
+          l.get("vehicleType"), l.get("aan") or None, l.get("fv"), l.get("td"), l.get("eng") or None,
+          json.dumps(l, ensure_ascii=False)))
+    if det.get("ln"):
+        salvar_detalhe(con, l["ln"], det)
+
+
+def salvar_detalhe(con, ln, det):
+    blind = det.get("armored")
+    if True:
+        con.execute("""UPDATE lotes_leilao SET versao=?, chassi=COALESCE(?, chassi), tipo_chassi=?, tipo_documento=?,
+                blindado=?, chave=?, final_placa=?, combustivel=?, cor=?, comitente=?, patio=?, condicoes_url=?,
+                obs=?, bruto_detalhe=? WHERE ln=?""",
+            (det.get("version"), det.get("fv"), det.get("vt"), det.get("stt"),
+             None if blind is None else int(bool(blind)), {"Y": "Sim", "N": "Não"}.get(det.get("hk"), det.get("hk")),
+             det.get("ldlp"), det.get("ft"), det.get("clr") or det.get("color"), det.get("scn"),
+             det.get("pyn") or det.get("yn"), det.get("scl"), (det.get("cmmnts") or "").strip() or None,
+             json.dumps(det, ensure_ascii=False), ln))
+
+
+PASTA_FOTOS = Path(__file__).parent / "fotos"
+
+
+def salvar_fotos(page, con, ln, baixar=True):
+    """Guarda a lista de fotos do lote e (opcional) baixa a versao media (VGA) pra pasta fotos/<lote>/."""
+    j = get_json(page, f"/public/data/lotdetails/solr/lotImages/{ln}")
+    lista = ((j.get("data") or {}).get("imagesList") or {})
+    vga = {f["sequenceNumber"]: f["url"] for f in lista.get("FULL_IMAGE") or []}
+    hd = {f["sequenceNumber"]: f["url"] for f in lista.get("HIGH_RESOLUTION_IMAGE") or []}
+    for seq in sorted(set(vga) | set(hd)):
+        arq = None
+        if baixar and vga.get(seq):
+            destino = PASTA_FOTOS / str(ln) / f"{seq:02d}.jpg"
+            if not destino.exists():
+                try:
+                    r = page.request.get(vga[seq], timeout=30000)
+                    if r.ok:
+                        destino.parent.mkdir(parents=True, exist_ok=True)
+                        destino.write_bytes(r.body())
+                    time.sleep(0.3)
+                except Exception as e:
+                    log(f"    foto {ln}/{seq} falhou: {e}")
+            if destino.exists():
+                arq = f"{ln}/{seq:02d}.jpg"
+        con.execute("INSERT OR REPLACE INTO fotos (ln, seq, url_vga, url_hd, arquivo) VALUES (?,?,?,?,?)",
+                    (ln, seq, vga.get(seq), hd.get(seq), arq))
+    con.execute("UPDATE lotes_leilao SET n_fotos=? WHERE ln=?", (len(set(vga) | set(hd)), ln))
 
 
 # ---------------- alertas ----------------
@@ -135,6 +205,8 @@ def telegram(cfg, texto):
 
 
 def bate_interesse(lote, it):
+    if it.get("tipo") and it["tipo"].lower() not in (lote["tipo_veiculo"] or "").lower():
+        return False
     if it.get("modelo") and it["modelo"].lower() not in (lote["descricao"] or "").lower():
         return False
     if it.get("ano_min") and int(lote["ano"] or 0) < int(it["ano_min"]):
@@ -151,7 +223,7 @@ def alertar(cfg):
         for l in novos:
             if any(bate_interesse(l, it) for it in cfg["interesses"]):
                 fora = "" if "VIT" in (l["local_fisico"] or "").upper() else f"\n⚠️ Fica em {l['local_fisico']} (frete)"
-                telegram(cfg, f"🏍️ {l['descricao']} — lote {l['ln']}\nLeilão {l['data_leilao']}\n"
+                telegram(cfg, f"🚗 {l['descricao']} — lote {l['ln']}\nLeilão {l['data_leilao']}\n"
                               f"Ref.: R$ {l['valor_ref']:,.0f} · Lance atual: R$ {l['lance_atual']:,.0f}\n"
                               f"{l['categoria']} · {l['condicao']}{fora}\n{SITE}lot/{l['ln']}")
                 con.execute("UPDATE lotes_leilao SET alertado=1 WHERE ln=?", (l["ln"],))
@@ -161,24 +233,32 @@ def alertar(cfg):
 def atualizar():
     cfg = carregar()
     iniciar()
+    corrigir_interrogacoes()
     with navegador() as page:
         leiloes = [x for x in leiloes_do_patio(page, cfg["patio"]) if x["data"] >= date.today().isoformat()]
         log(f"{len(leiloes)} leilão(ões) do pátio {cfg['patio']}")
         for lei in leiloes:
-            lotes = [l for l in lotes_do_leilao(page, lei["aid"]) if l.get("vehicleType") == "Motos"]
-            log(f"  {lei['data']} (leilão {lei['aid']}): {len(lotes)} motos")
+            lotes = lotes_do_leilao(page, lei["aid"])
+            motos = sum(1 for l in lotes if l.get("vehicleType") == "Motos")
+            log(f"  {lei['data']} (leilão {lei['aid']}): {len(lotes)} veículos ({motos} motos)")
             with conectar() as con:
-                conhecidos = {r[0] for r in con.execute("SELECT ln FROM lotes_leilao WHERE versao IS NOT NULL")}
+                conhecidos = {r[0] for r in con.execute(
+                    "SELECT ln FROM lotes_leilao WHERE bruto_detalhe IS NOT NULL AND n_fotos IS NOT NULL")}
             for l in lotes:
                 det = None
-                if l["ln"] not in conhecidos:  # detalhe so na primeira vez
+                if l["ln"] not in conhecidos:  # detalhe e fotos so na primeira vez
                     time.sleep(1.5)
                     det = detalhe(page, l["ln"])
                 with conectar() as con:
                     salvar_lote(con, l, lei["data"], lei["aid"], det)
+                    if det is not None:
+                        try:
+                            salvar_fotos(page, con, l["ln"], cfg["baixar_fotos"])
+                        except Exception as e:
+                            log(f"    fotos do lote {l['ln']} falharam: {e}")
         # preco de mercado (OLX-PE) das motos que vao a leilao
         with conectar() as con:
-            motos = con.execute("SELECT DISTINCT marca, modelo, ano FROM lotes_leilao WHERE data_leilao>=?",
+            motos = con.execute("SELECT DISTINCT marca, modelo, ano FROM lotes_leilao WHERE data_leilao>=? AND tipo_veiculo='Motos'",
                                 (date.today().isoformat(),)).fetchall()
         if cfg.get("pesquisar_olx"):
             log(f"Pesquisando preço de mercado de {len(motos)} modelo(s)…")
@@ -194,15 +274,30 @@ def finalizar(con, page, ln, motivo):
     if not valor:
         row = con.execute("SELECT lance_atual FROM lotes_leilao WHERE ln=?", (ln,)).fetchone()
         valor = row[0] if row else None
-    con.execute("UPDATE lotes_leilao SET valor_final=?, status_final=?, bruto_final=? WHERE ln=?",
-                (valor, f"{det.get('saleStatus') or ''} {det.get('bidStatus') or ''} ({motivo})".strip(),
+    if det.get("ln"):
+        salvar_detalhe(con, ln, det)
+    vendido = det.get("lotSoldFlag")
+    if not det.get("ln"):
+        # a Copart apaga a ficha publica do lote que nao foi vendido;
+        # o valor guardado e o ultimo lance visto
+        vendido = False
+    status = {True: "Vendido", False: "Não vendido"}.get(vendido, "?")
+    con.execute("UPDATE lotes_leilao SET valor_final=?, vendido=?, status_final=?, bruto_final=? WHERE ln=?",
+                (valor, None if vendido is None else int(bool(vendido)), f"{status} ({motivo})",
                  json.dumps(det, ensure_ascii=False), ln))
-    log(f"  lote {ln}: final R$ {valor} [{det.get('saleStatus')}/{det.get('bidStatus')}] ({motivo})")
+    log(f"  lote {ln}: {status} R$ {valor} ({motivo})")
+
+
+def corrigir_interrogacoes():
+    with conectar() as con:
+        con.execute("""UPDATE lotes_leilao SET vendido=0, status_final='Não vendido (ficha removida)'
+                       WHERE status_final LIKE '?%' AND (bruto_final IS NULL OR bruto_final='{}')""")
 
 
 def ao_vivo(data_alvo=None):
     cfg = carregar()
     iniciar()
+    corrigir_interrogacoes()
     data_alvo = data_alvo or date.today().isoformat()
     with navegador() as page:
         lei = next((x for x in leiloes_do_patio(page, cfg["patio"]) if x["data"] == data_alvo), None)
@@ -215,7 +310,11 @@ def ao_vivo(data_alvo=None):
                 log(f"Leilão às {datetime.fromtimestamp(lei['inicio']/1000):%H:%M}. Esperando {espera/60:.0f} min…")
                 time.sleep(espera)
         log(f"Acompanhando leilão {lei['aid']}")
-        pendentes, fim = {}, time.time() + 5 * 3600
+        with conectar() as con:
+            pendentes = {r[0]: True for r in con.execute(
+                "SELECT ln FROM lotes_leilao WHERE auction_id=? AND valor_final IS NULL", (lei["aid"],))}
+        log(f"  {len(pendentes)} lotes já conhecidos sem resultado")
+        fim = time.time() + 6 * 3600
         while time.time() < fim:
             try:
                 lotes = lotes_do_leilao(page, lei["aid"])
@@ -224,26 +323,38 @@ def ao_vivo(data_alvo=None):
                 page.reload()
                 time.sleep(30)
                 continue
-            agora = {l["ln"]: l for l in lotes if l.get("vehicleType") == "Motos"}
-            with conectar() as con:
-                for ln, l in agora.items():
-                    salvar_lote(con, l, lei["data"], lei["aid"])
-                    con.execute("INSERT INTO lances_hist (ln, ts, lance) VALUES (?,?,?)",
-                                (ln, datetime.now().isoformat(timespec="seconds"), float(l.get("hb") or 0)))
-                    pendentes[ln] = True
-                # moto que sumiu da lista = ja foi leiloada
-                for ln in [x for x in pendentes if x not in agora]:
-                    finalizar(con, page, ln, "saiu da lista")
-                    del pendentes[ln]
-                    time.sleep(1)
+            agora = {l["ln"]: l for l in lotes}
+            try:
+                registrar_rodada(page, lei, agora, pendentes)
+            except Exception:
+                import traceback
+                log("Erro na rodada (continuando):", traceback.format_exc())
             if not agora:
-                log("Nenhuma moto restante na lista.")
+                log("Nenhum veículo restante na lista.")
                 break
+            log(f"  rodada ok: {len(agora)} na lista, {sum(1 for x in pendentes if x not in agora)} a finalizar")
             time.sleep(60)
         with conectar() as con:
-            for ln in pendentes:
-                finalizar(con, page, ln, "fim do acompanhamento")
+            for ln in list(pendentes):
+                try:
+                    finalizar(con, page, ln, "fim do acompanhamento")
+                except Exception as e:
+                    log(f"  lote {ln}: erro ao finalizar: {e}")
     log("Leilão encerrado.")
+
+
+def registrar_rodada(page, lei, agora, pendentes):
+    with conectar() as con:
+        for ln, l in agora.items():
+            salvar_lote(con, l, lei["data"], lei["aid"])
+            con.execute("INSERT INTO lances_hist (ln, ts, lance) VALUES (?,?,?)",
+                        (ln, datetime.now().isoformat(timespec="seconds"), float(l.get("hb") or 0)))
+            pendentes[ln] = True
+        # moto que sumiu da lista = ja foi leiloada
+        for ln in [x for x in pendentes if x not in agora]:
+            finalizar(con, page, ln, "saiu da lista")
+            del pendentes[ln]
+            time.sleep(1)
 
 
 def mostrar_lote(texto):
@@ -258,8 +369,27 @@ def login():
         input("Faça login na janela que abriu e depois aperte ENTER aqui…")
 
 
-if __name__ == "__main__":
+def trava(nome):
+    """Impede rodar dois robos iguais ao mesmo tempo."""
+    import os
+    arq = Path(__file__).parent / f".{nome}.lock"
+    try:
+        pid = int(arq.read_text())
+        import subprocess
+        saida = subprocess.run(["tasklist", "/FI", f"PID eq {pid}"], capture_output=True, text=True).stdout
+        if str(pid) in saida:
+            log(f"Já tem um '{nome}' rodando (PID {pid}). Feche aquela janela antes.")
+            sys.exit(1)
+    except (OSError, ValueError):
+        pass
+    arq.write_text(str(os.getpid()))
+
+
+def principal():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "atualizar"
+    if cmd in ("atualizar", "ao-vivo"):
+        trava(cmd)
+        nao_dormir(True)
     if cmd == "atualizar":
         atualizar()
     elif cmd == "ao-vivo":
@@ -270,3 +400,16 @@ if __name__ == "__main__":
         login()
     else:
         print(__doc__)
+
+
+if __name__ == "__main__":
+    try:
+        principal()
+    except SystemExit:
+        raise
+    except BaseException:
+        import traceback
+        log("ERRO FATAL:", traceback.format_exc())
+        raise
+    finally:
+        nao_dormir(False)

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block conteudo %}
+<div class="cabeca"><h1>Painel</h1><p class="sub">Suas compras, gastos e lucro.</p></div>
 <div class="cards">
   <div class="card"><small>Dinheiro parado em estoque</small><b>{{ t.parado|brl }}</b></div>
   <div class="card"><small>Lucro realizado</small><b class="{{ 'pos' if t.lucro >= 0 else 'neg' }}">{{ t.lucro|brl }}</b></div>
